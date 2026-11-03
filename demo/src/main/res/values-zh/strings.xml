@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">CameraView</string>
+
+    <!-- 相机权限提示（FS-1）：拒绝权限时绝不留无声的空白页。 -->
+    <string name="permission_notice_camera_rationale">需要相机权限才能预览和拍摄，现在可以重试。</string>
+    <string name="permission_notice_camera_permanently_denied">相机权限已被拒绝。如需使用相机，请前往『设置 → 权限』手动开启。</string>
+    <string name="permission_notice_audio_denied_degrade">麦克风权限被拒绝，录像将没有声音。</string>
+    <string name="permission_notice_retry">重新授权</string>
+    <string name="permission_notice_open_settings">前往设置</string>
+    <string name="permission_notice_settings_unavailable">无法打开系统设置页，请手动到系统设置中开启相机权限。</string>
+</resources>

@@ -1,19 +1,28 @@
 package com.otaliastudios.cameraview.demo
 
+import android.Manifest
 import android.animation.ValueAnimator
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.graphics.*
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.widget.Button
+import android.widget.TextView
 import android.widget.Toast
+import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.otaliastudios.cameraview.*
+import com.otaliastudios.cameraview.controls.Audio
 import com.otaliastudios.cameraview.controls.Facing
 import com.otaliastudios.cameraview.controls.Mode
 import com.otaliastudios.cameraview.controls.Preview
@@ -34,7 +43,102 @@ class CameraActivity : AppCompatActivity(), View.OnClickListener, OptionView.Cal
 
     private val camera: CameraView by lazy { findViewById(R.id.camera) }
     private val controlPanel: ViewGroup by lazy { findViewById(R.id.controls) }
+    private val permissionNotice: ViewGroup by lazy { findViewById(R.id.permissionNotice) }
+    private val permissionNoticeText: TextView by lazy { findViewById(R.id.permissionNoticeText) }
+    private val permissionNoticeButton: Button by lazy { findViewById(R.id.permissionNoticeButton) }
     private var captureTime: Long = 0
+
+    /**
+     * Shows a non-blocking, readable notice when camera permissions are missing,
+     * instead of leaving a blank preview with no explanation.
+     *
+     * The button either re-launches the system permission dialog (while it can
+     * still be shown) or opens the system app settings page (after the user
+     * checked "don't ask again"), so the user always has a visible way out.
+     */
+    private fun showPermissionNotice(@StringRes textRes: Int, @StringRes buttonTextRes: Int, openSettings: Boolean) {
+        permissionNoticeText.text = getString(textRes)
+        permissionNoticeButton.text = getString(buttonTextRes)
+        permissionNoticeButton.setOnClickListener {
+            if (openSettings) {
+                openSystemSettings()
+            } else {
+                permissionNotice.visibility = View.GONE
+                camera.open()
+            }
+        }
+        val wasVisible = permissionNotice.visibility == View.VISIBLE
+        permissionNotice.visibility = View.VISIBLE
+        // On Android 11+ with auto-denied permissions, every resume() re-enters this
+        // path instantly. Only toast when the notice actually (re)appears.
+        if (!wasVisible) {
+            message(getString(textRes), important = true)
+        }
+    }
+
+    private fun hidePermissionNotice() {
+        permissionNotice.visibility = View.GONE
+    }
+
+    private fun openSystemSettings() {
+        try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", packageName, null))
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            // Extremely defensive: some exotic ROMs may not have a details page.
+            LOG.w("Unable to open application details settings.", e)
+            message(getString(R.string.permission_notice_settings_unavailable), important = true)
+        }
+    }
+
+    private fun handlePermissionDenied(permissions: Array<String?>, grantResults: IntArray) {
+        val deniedCamera = isDenied(Manifest.permission.CAMERA, permissions, grantResults)
+        val deniedAudio = isDenied(Manifest.permission.RECORD_AUDIO, permissions, grantResults)
+        LOG.w("Permission denied. camera=", deniedCamera, " audio=", deniedAudio)
+        if (deniedCamera) {
+            // Without CAMERA the preview cannot start at all. Never leave a silent blank screen.
+            // Runtime permissions only exist on API 23+, which is also the only case
+            // in which this callback can be reached with a denial.
+            val canStillShowDialog = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                    && shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)
+            if (canStillShowDialog) {
+                // The system dialog can still be shown: explain and offer a visible retry.
+                showPermissionNotice(R.string.permission_notice_camera_rationale,
+                        R.string.permission_notice_retry, openSettings = false)
+            } else {
+                // "Don't ask again" (or Android 11+ auto-denial after repeated denials):
+                // the system dialog will no longer appear. Guide the user to settings.
+                showPermissionNotice(R.string.permission_notice_camera_permanently_denied,
+                        R.string.permission_notice_open_settings, openSettings = true)
+            }
+        } else if (deniedAudio) {
+            // Camera works without audio. Degrade gracefully instead of blocking the preview.
+            message(getString(R.string.permission_notice_audio_denied_degrade), important = true)
+            if (camera.audio != Audio.OFF) {
+                camera.setAudio(Audio.OFF)
+            }
+            if (!camera.isOpened) camera.open()
+        }
+    }
+
+    private fun isDenied(permission: String, permissions: Array<String?>, grantResults: IntArray): Boolean {
+        val index = permissions.indexOf(permission)
+        return index >= 0 && grantResults[index] != PERMISSION_GRANTED
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // If the user granted the permission from the system settings page,
+        // onRequestPermissionsResult will never fire (no dialog was shown),
+        // so clear any stale notice here to avoid covering the live preview.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && permissionNotice.visibility == View.VISIBLE
+                && checkSelfPermission(Manifest.permission.CAMERA) == PERMISSION_GRANTED) {
+            hidePermissionNotice()
+        }
+    }
 
     private var currentFilter = 0
     private val allFilters = Filters.values()
@@ -336,9 +440,18 @@ class CameraActivity : AppCompatActivity(), View.OnClickListener, OptionView.Cal
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String?>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        val valid = grantResults.all { it == PERMISSION_GRANTED }
-        if (valid && !camera.isOpened) {
-            camera.open()
+        if (requestCode != CameraView.PERMISSION_REQUEST_CODE) return
+        val valid = grantResults.isNotEmpty() &&
+                grantResults.all { it == PERMISSION_GRANTED }
+        if (valid) {
+            hidePermissionNotice()
+            if (!camera.isOpened) {
+                camera.open()
+            }
+        } else {
+            // Permission was rejected: give a visible, readable way out
+            // instead of silently leaving a blank preview (FS-1).
+            handlePermissionDenied(permissions, grantResults)
         }
     }
 }

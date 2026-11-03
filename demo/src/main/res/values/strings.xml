@@ -1,3 +1,11 @@
 <resources>
     <string name="app_name">CameraView</string>
+
+    <!-- Camera permission notices (FS-1): never leave a silent blank screen. -->
+    <string name="permission_notice_camera_rationale">Camera permission is required to show the preview and take pictures. You can try again now.</string>
+    <string name="permission_notice_camera_permanently_denied">Camera permission was denied. To use the camera, please enable it in Settings → Permissions.</string>
+    <string name="permission_notice_audio_denied_degrade">Microphone permission was denied. Video recording will continue without sound.</string>
+    <string name="permission_notice_retry">Grant permission</string>
+    <string name="permission_notice_open_settings">Open Settings</string>
+    <string name="permission_notice_settings_unavailable">Could not open the system settings page. Please grant the camera permission manually from the system settings.</string>
 </resources>
