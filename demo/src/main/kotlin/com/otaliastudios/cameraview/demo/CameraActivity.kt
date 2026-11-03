@@ -2,18 +2,24 @@ package com.otaliastudios.cameraview.demo
 
 import android.animation.ValueAnimator
 import android.content.Intent
+import android.content.Context
 import android.content.pm.PackageManager
 import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.graphics.*
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.otaliastudios.cameraview.*
+import com.otaliastudios.cameraview.controls.Audio
 import com.otaliastudios.cameraview.controls.Facing
 import com.otaliastudios.cameraview.controls.Mode
 import com.otaliastudios.cameraview.controls.Preview
@@ -30,6 +36,15 @@ class CameraActivity : AppCompatActivity(), View.OnClickListener, OptionView.Cal
         private val LOG = CameraLogger.create("DemoApp")
         private const val USE_FRAME_PROCESSOR = false
         private const val DECODE_BITMAP = false
+
+        private const val CAMERA_PERMISSION = android.Manifest.permission.CAMERA
+        private const val RECORD_AUDIO_PERMISSION = android.Manifest.permission.RECORD_AUDIO
+
+        private fun hasPermissions(context: Context, permissions: List<String>): Boolean {
+            return permissions.all {
+                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+            }
+        }
     }
 
     private val camera: CameraView by lazy { findViewById(R.id.camera) }
@@ -336,9 +351,57 @@ class CameraActivity : AppCompatActivity(), View.OnClickListener, OptionView.Cal
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String?>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != CameraView.PERMISSION_REQUEST_CODE) return
         val valid = grantResults.all { it == PERMISSION_GRANTED }
-        if (valid && !camera.isOpened) {
-            camera.open()
+        if (valid) {
+            if (!camera.isOpened) camera.open()
+            return
+        }
+        // Some permission was denied: never crash, never stay silent.
+        LOG.w("onRequestPermissionsResult: denied.", permissions, grantResults)
+        val cameraDenied = !hasPermissions(this, listOf(CAMERA_PERMISSION))
+        val audioDenied = !hasPermissions(this, listOf(RECORD_AUDIO_PERMISSION))
+        if (cameraDenied) {
+            // The camera permission is a hard requirement.
+            if (!shouldShowRequestPermissionRationale(CAMERA_PERMISSION)) {
+                // Permanently denied ("Don't ask again") or Android 11+ auto-deny:
+                // the system dialog can never be shown again - guide to settings.
+                showCameraPermissionDeniedDialog()
+            } else {
+                message("相机权限被拒绝，无法打开相机。请重新进入页面再次授权，或前往系统设置开启权限", important = true)
+            }
+        } else if (audioDenied) {
+            // Camera is usable, but video recording will have no sound.
+            // Degrade to Audio.OFF instead of blocking the whole camera.
+            camera.setAudio(Audio.OFF)
+            message("录音权限被拒绝，录像将不带声音", important = true)
+            if (!camera.isOpened) camera.open()
+        }
+    }
+
+    /**
+     * Shows a dialog guiding the user to the system settings page where the
+     * camera permission can be granted manually, since the system permission
+     * dialog can no longer be shown by the app.
+     */
+    private fun showCameraPermissionDeniedDialog() {
+        AlertDialog.Builder(this)
+                .setTitle("缺少相机权限")
+                .setMessage("相机权限未授予，无法使用相机。请在设置中手动开启相机权限，然后返回应用重试。")
+                .setCancelable(false)
+                .setPositiveButton("去设置") { _, _ -> openApplicationSettings() }
+                .setNegativeButton("取消", null)
+                .show()
+    }
+
+    private fun openApplicationSettings() {
+        try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", packageName, null))
+            startActivity(intent)
+        } catch (e: Exception) {
+            LOG.w("Failed to open application settings.", e)
+            message("无法打开设置页，请手动前往系统设置开启相机权限", important = true)
         }
     }
 }
