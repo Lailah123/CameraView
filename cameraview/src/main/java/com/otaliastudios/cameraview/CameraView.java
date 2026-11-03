@@ -2018,8 +2018,17 @@ public class CameraView extends FrameLayout implements LifecycleObserver {
         if (requestCamera) permissions.add(Manifest.permission.CAMERA);
         if (requestAudio) permissions.add(Manifest.permission.RECORD_AUDIO);
         if (activity != null) {
+            LOG.w("requestPermissions:", "requesting", permissions, "through the hosting activity.",
+                    "The host must consume onRequestPermissionsResult(" + PERMISSION_REQUEST_CODE + "):",
+                    "call open() again if granted, or show a visible notice / degrade if denied.");
             activity.requestPermissions(permissions.toArray(new String[0]),
                     PERMISSION_REQUEST_CODE);
+        } else {
+            // No hosting activity means we can never show the system dialog.
+            // Log loudly instead of failing silently with a blank preview.
+            LOG.e("requestPermissions:", "the context is not an activity, cannot request", permissions,
+                    "Ensure the CameraView is attached to an activity, or handle permissions",
+                    "before adding this view.");
         }
     }
 
